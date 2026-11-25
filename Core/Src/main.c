@@ -18,7 +18,6 @@
 
 //#define USE_EEPROM
 //#define RUN_I2C_SCANNER
-
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -137,10 +136,22 @@ const uint16_t crc_final_xor_genibus = 0xFFFF;
 const uint16_t crc_expected_modbus = 0x4B37; // MODBUS
 const uint16_t crc_final_xor_modbus = 0x0000;
 
+// UID
+uint32_t uid[3];
+uint8_t lot1[4];
+uint8_t lot2[4];
+uint8_t *ptr;
+
+// DBGMCU_IDCODE
+uint32_t devId;
+uint32_t revId;
+uint16_t flashSizeKb;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
 void Hash256String2ArrayOfBytes(const uint8_t *hash_string, uint8_t *hash_bytes);
 void MX_CRC16_USB_Init(void);
@@ -170,6 +181,9 @@ int main(void)
 
 	/* MCU Configuration--------------------------------------------------------*/
 
+	/* MPU Configuration--------------------------------------------------------*/
+	MPU_Config();
+
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	HAL_Init();
 
@@ -187,7 +201,6 @@ int main(void)
 	/* Initialize all configured peripherals */
 	MX_GPIO_Init();
 	MX_GPDMA1_Init();
-	MX_ICACHE_Init();
 	MX_USB_PCD_Init();
 	MX_HASH_Init();
 	MX_USART3_UART_Init();
@@ -196,7 +209,29 @@ int main(void)
 	MX_RNG_Init();
 	MX_CRC_Init();
 	MX_I2C2_Init();
+	MX_ICACHE_Init();
 	/* USER CODE BEGIN 2 */
+
+	// https://community.st.com/stm32-mcus-60/how-to-obtain-and-use-the-stm32-96-bit-uid-125456
+	uid[0] = HAL_GetUIDw0();
+	uid[1] = HAL_GetUIDw1();
+	uid[2] = HAL_GetUIDw2();
+	ptr = (uint8_t*) &uid[1];
+	for (uint8_t i = 0; i < 4; i++)
+	{
+		lot1[i] = ptr[i];
+	}
+	ptr = (uint8_t*) &uid[2];
+	for (uint8_t i = 0; i < 4; i++)
+	{
+		lot2[i] = ptr[i];
+	}
+
+	// DBGMCU_IDCODE
+	devId = DBGMCU->IDCODE & DBGMCU_IDCODE_DEV_ID_Msk; // e.g. 0x474 for STM32H503 microcontroller line
+	revId = (DBGMCU->IDCODE & DBGMCU_IDCODE_REV_ID_Msk)
+			>> DBGMCU_IDCODE_REV_ID_Pos;
+	flashSizeKb = *(__IO uint16_t*) FLASHSIZE_BASE;
 
 	// OLED
 	ssd1306_Init();
@@ -621,6 +656,42 @@ void DisplayDieStats(void)
 	ssd1306_UpdateScreen();
 }
 /* USER CODE END 4 */
+
+/* MPU Configuration */
+
+void MPU_Config(void)
+{
+	MPU_Region_InitTypeDef MPU_InitStruct =
+	{ 0 };
+	MPU_Attributes_InitTypeDef MPU_AttributesInit =
+	{ 0 };
+
+	/* Disables the MPU */
+	HAL_MPU_Disable();
+
+	/** Initializes and configures the Region 0 and the memory to be protected
+	 */
+	MPU_InitStruct.Enable = MPU_REGION_ENABLE;
+	MPU_InitStruct.Number = MPU_REGION_NUMBER0;
+	MPU_InitStruct.BaseAddress = 0x08FFF800;
+	MPU_InitStruct.LimitAddress = 0x08FFFFFF;
+	MPU_InitStruct.AttributesIndex = MPU_ATTRIBUTES_NUMBER0;
+	MPU_InitStruct.AccessPermission = MPU_REGION_ALL_RO;
+	MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+	MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+
+	HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+	/** Initializes and configures the Attribute 0 and the memory to be protected
+	 */
+	MPU_AttributesInit.Number = MPU_ATTRIBUTES_NUMBER0;
+	MPU_AttributesInit.Attributes = MPU_DEVICE_nGnRnE;
+
+	HAL_MPU_ConfigMemoryAttributes(&MPU_AttributesInit);
+	/* Enables the MPU */
+	HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
+}
 
 /**
  * @brief  This function is executed in case of error occurrence.
